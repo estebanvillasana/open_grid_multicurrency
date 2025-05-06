@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QDateEdit, QLineEdit, QStyledItemDelegate, QMessageBox,
     QApplication
 )
-from PyQt6.QtCore import Qt, QDate, pyqtSignal, QObject, QMimeData
+from PyQt6.QtCore import Qt, QDate, pyqtSignal, QObject, QMimeData, QTimer
 from PyQt6.QtGui import QColor, QBrush, QKeySequence, QFont
 import csv
 import io
@@ -14,7 +14,8 @@ from models.category import Category, SubCategory
 from data.repositories.transaction_repository import TransactionRepository
 from gui.widgets.custom_delegates import (
     AccountDelegate, CategoryDelegate, SubCategoryDelegate,
-    DateDelegate, CurrencyDelegate, TransactionTypeDelegate
+    DateDelegate, CurrencyDelegate, TransactionTypeDelegate,
+    RowColorDelegate
 )
 
 
@@ -38,13 +39,13 @@ class TransactionGrid(QTableWidget):
     COL_SUBCATEGORY = 7
     COL_DATE = 8
 
-    # Colors - Updated for better visibility in dark theme
-    ADD_ROW_COLOR = QColor(50, 100, 160, 100)  # Darker blue for add row
-    NEW_ROW_COLOR = QColor(52, 152, 219, 160)  # Much more visible blue for dark themes
-    ERROR_ROW_COLOR = QColor(231, 76, 60, 160)  # More visible red for validation errors
-    INCOME_COLOR = QColor(46, 204, 113, 70)  # Green with transparency
-    EXPENSE_COLOR = QColor(231, 76, 60, 70)  # Red with transparency
-    TRANSFER_COLOR = QColor(52, 152, 219, 70)  # Blue with transparency
+    # Colors - Updated for better visibility in dark theme with more subtle transparency
+    ADD_ROW_COLOR = QColor(50, 100, 160, 40)  # Very subtle blue for add row
+    NEW_ROW_COLOR = QColor(100, 181, 246, 60)  # Subtle blue for new rows (increased opacity)
+    ERROR_ROW_COLOR = QColor(239, 83, 80, 60)  # Subtle red for validation errors (increased opacity)
+    INCOME_COLOR = QColor(46, 204, 113, 20)  # Very subtle green
+    EXPENSE_COLOR = QColor(231, 76, 60, 20)  # Very subtle red
+    TRANSFER_COLOR = QColor(52, 152, 219, 20)  # Very subtle blue
 
     def __init__(self):
         super().__init__()
@@ -68,7 +69,7 @@ class TransactionGrid(QTableWidget):
         self.setColumnWidth(self.COL_CATEGORY, 150)
         self.setColumnWidth(self.COL_SUBCATEGORY, 150)
         self.setColumnWidth(self.COL_DATE, 100)
-        
+
         # Set row height to improve color visibility
         self.verticalHeader().setDefaultSectionSize(30)
 
@@ -102,6 +103,10 @@ class TransactionGrid(QTableWidget):
 
     def setup_delegates(self):
         """Set up custom delegates for editing different column types."""
+        # Row color delegate for all columns
+        self.row_color_delegate = RowColorDelegate(self)
+        self.setItemDelegate(self.row_color_delegate)
+
         # Account delegate
         self.setItemDelegateForColumn(self.COL_ACCOUNT, AccountDelegate(self))
 
@@ -208,6 +213,9 @@ class TransactionGrid(QTableWidget):
             # Highlight as a new row
             self.highlight_new_row(row)
 
+            # Schedule another highlight after a short delay to ensure it's applied
+            QTimer.singleShot(100, lambda r=row: self.highlight_new_row(r))
+
             row += 1
 
         # Add an empty row at the end for direct data entry
@@ -264,17 +272,13 @@ class TransactionGrid(QTableWidget):
 
     def color_row(self, row, transaction_type):
         """Color a row based on transaction type."""
-        if transaction_type == "Expense":
-            color = self.EXPENSE_COLOR
-        elif transaction_type == "Income":
-            color = self.INCOME_COLOR
-        else:
-            color = self.TRANSFER_COLOR
-
+        # With our delegate, we don't need to manually color rows
+        # The delegate will handle coloring based on row state
+        # Just update the specific row to trigger the delegate's paint method
         for col in range(self.columnCount()):
-            item = self.item(row, col)
-            if item:
-                item.setBackground(QBrush(color))
+            index = self.model().index(row, col)
+            if index.isValid():
+                self.update(index)
 
     def add_empty_row(self):
         """Add an empty row for a new transaction."""
@@ -320,61 +324,57 @@ class TransactionGrid(QTableWidget):
 
     def highlight_add_row(self, row):
         """Apply special styling to the add row (+ row)."""
-        # Use a light blue background for the add row
+        # The delegate will handle the coloring
+        # Just make sure the row is updated
         for col in range(self.columnCount()):
-            item = self.item(row, col)
-            if item:
-                item.setBackground(QBrush(self.ADD_ROW_COLOR))
+            index = self.model().index(row, col)
+            if index.isValid():
+                self.update(index)
 
     def highlight_new_row(self, row):
         """Apply special styling to new rows that haven't been saved yet."""
-        # Use a more visible blue color to indicate unsaved new rows
-        self.blockSignals(True)  # Block all signals to prevent recursion
-        try:
-            for col in range(self.columnCount()):
-                item = self.item(row, col)
-                if item:
-                    # Apply direct background color - force with style override
-                    item.setData(Qt.ItemDataRole.BackgroundRole, self.NEW_ROW_COLOR)
-                    item.setBackground(QBrush(self.NEW_ROW_COLOR))
-                    
-                    # Set bold font for better visibility
-                    font = QFont()
-                    font.setBold(True)
-                    item.setFont(font)
-                    
-                    # Make first cell show "NEW" if it's not the name column
-                    if col == self.COL_NAME and not item.text().startswith("NEW: ") and item.text() != "+":
-                        item.setText("NEW: " + item.text())
-        finally:
-            self.blockSignals(False)  # Always ensure signals are unblocked
+        # Add to new rows list if not already there
+        if row not in self.new_rows:
+            self.new_rows.append(row)
+
+        # Make first cell show "NEW" if it's not already
+        name_item = self.item(row, self.COL_NAME)
+        if name_item and not name_item.text().startswith("NEW: ") and name_item.text() != "+":
+            self.blockSignals(True)
+            name_item.setText("NEW: " + name_item.text())
+            self.blockSignals(False)
+
+        # Force update each cell in the row to apply the delegate's coloring
+        for col in range(self.columnCount()):
+            index = self.model().index(row, col)
+            if index.isValid():
+                self.update(index)
+
+        # Also force a full repaint to ensure all cells are updated
+        self.repaint()
 
     def highlight_error_row(self, row, error_message=None):
         """Apply error styling to rows that failed validation."""
-        # Use a red background for rows with errors
-        self.blockSignals(True)  # Block all signals to prevent recursion
-        try:
-            for col in range(self.columnCount()):
-                item = self.item(row, col)
-                if item:
-                    # Force the background color using direct role assignment
-                    item.setData(Qt.ItemDataRole.BackgroundRole, self.ERROR_ROW_COLOR)
-                    item.setBackground(QBrush(self.ERROR_ROW_COLOR))
-                    
-                    # Make text bold and white for contrast
-                    font = QFont()
-                    font.setBold(True)
-                    item.setFont(font)
-                    item.setForeground(QBrush(QColor(255, 255, 255)))
-                    
-                    # Set tooltip on all cells to show the error
-                    item.setToolTip(error_message if error_message else "Validation error")
-            
-            # Add to error rows list if not already there
-            if row not in self.error_rows:
-                self.error_rows.append(row)
-        finally:
-            self.blockSignals(False)  # Always ensure signals are unblocked
+        # Add to error rows list if not already there
+        if row not in self.error_rows:
+            self.error_rows.append(row)
+
+        # Set tooltip on all cells to show the error
+        self.blockSignals(True)
+        for col in range(self.columnCount()):
+            item = self.item(row, col)
+            if item:
+                item.setToolTip(error_message if error_message else "Validation error")
+        self.blockSignals(False)
+
+        # Force update each cell in the row to apply the delegate's coloring
+        for col in range(self.columnCount()):
+            index = self.model().index(row, col)
+            if index.isValid():
+                self.update(index)
+
+        # Also force a full repaint to ensure all cells are updated
+        self.repaint()
 
     def get_selected_transaction(self):
         """Get the currently selected transaction."""
@@ -470,7 +470,7 @@ class TransactionGrid(QTableWidget):
                 # Find the row for this transaction
                 for row in range(self.rowCount()):
                     id_item = self.item(row, self.COL_ID)
-                    if (id_item and id_item.data(Qt.ItemDataRole.UserRole) and 
+                    if (id_item and id_item.data(Qt.ItemDataRole.UserRole) and
                         id_item.data(Qt.ItemDataRole.UserRole).id == transaction.id):
                         self.highlight_error_row(row, validation_result[1])
                         validation_errors.append((row, validation_result[1]))
@@ -486,14 +486,14 @@ class TransactionGrid(QTableWidget):
 
                 if not is_add_row:
                     transaction = self.get_transaction_from_row(row)
-                    
+
                     # Remove "NEW: " prefix before saving
                     if transaction.name and transaction.name.startswith("NEW: "):
                         transaction.name = transaction.name[5:]  # Remove the "NEW: " prefix
                         name_item = self.item(row, self.COL_NAME)
                         if name_item:
                             name_item.setText(transaction.name)
-                    
+
                     # Validate transaction
                     validation_result = self.validate_transaction(transaction)
                     if validation_result[0]:
@@ -504,17 +504,24 @@ class TransactionGrid(QTableWidget):
                         # Highlight as error
                         self.highlight_error_row(row, validation_result[1])
                         validation_errors.append((row, validation_result[1]))
-                        
+
         # Force update visually after all changes
         self.update()
         self.repaint()
+
+        # Make sure error rows are properly highlighted
+        for row, _ in validation_errors:
+            if row < self.rowCount():
+                # Force update the row to ensure error highlighting is visible
+                self.update(self.model().index(row, 0))
+                self.update(self.model().index(row, self.columnCount() - 1))
 
         # Update the new_rows list to remove saved rows
         self.new_rows = [row for row in self.new_rows if row not in saved_rows]
 
         # Clear changes dictionary
         self.changes.clear()
-        
+
         # Emit validation errors if any
         if validation_errors:
             self.validation_failed.emit(validation_errors)
@@ -524,12 +531,12 @@ class TransactionGrid(QTableWidget):
         # This will keep unsaved rows at the bottom
         from data.repositories.transaction_repository import TransactionRepository
         self.load_transactions(TransactionRepository.get_transactions_with_details())
-        
+
         return True  # Return True to indicate all rows were saved successfully
 
     def validate_transaction(self, transaction):
         """Validate that a transaction has all required fields.
-        
+
         Returns:
             tuple: (is_valid, error_message)
         """
@@ -539,10 +546,10 @@ class TransactionGrid(QTableWidget):
 
         if not transaction.account_id:
             return (False, "Account is required")
-            
+
         if not transaction.transaction_type:
             return (False, "Type is required")
-            
+
         if not transaction.date:
             return (False, "Date is required")
 
@@ -625,13 +632,21 @@ class TransactionGrid(QTableWidget):
             if col == self.COL_NAME and item.text() == "+":
                 # Clear the + sign but keep focus on this cell
                 item.setText("")
-            
+
             # Mark this as a new row (not the add row anymore)
             if row not in self.new_rows:
                 self.new_rows.append(row)
 
             # Apply the highlight to show this is a new, unsaved row
             self.highlight_new_row(row)
+
+            # Force update to ensure the highlighting is visible
+            self.update()
+            self.repaint()
+
+            # Explicitly set the background color again after a short delay
+            # This helps ensure the color is applied even if other events interfere
+            QTimer.singleShot(100, lambda: self.highlight_new_row(row))
 
             # Make sure we have a new "+" row at the end
             # Check if we already have an add row marker
@@ -641,7 +656,7 @@ class TransactionGrid(QTableWidget):
                 if item and item.data(Qt.ItemDataRole.UserRole) == "add_row_marker":
                     has_add_row = True
                     break
-            
+
             if not has_add_row:
                 self.add_empty_row()
 
@@ -649,7 +664,15 @@ class TransactionGrid(QTableWidget):
         elif row in self.new_rows and not is_add_row:
             # Apply the highlight to show this is a new, unsaved row
             self.highlight_new_row(row)
-            
+
+            # Force update to ensure the highlighting is visible
+            self.update()
+            self.repaint()
+
+            # Explicitly set the background color again after a short delay
+            # This helps ensure the color is applied even if other events interfere
+            QTimer.singleShot(100, lambda: self.highlight_new_row(row))
+
             # If this row was previously marked as an error, remove the error styling
             if row in self.error_rows:
                 self.error_rows.remove(row)
@@ -659,7 +682,7 @@ class TransactionGrid(QTableWidget):
                     if i:
                         i.setToolTip("")
                         i.setData(Qt.ItemDataRole.UserRole + 2, None)
-                
+
         # Otherwise, if it's an existing transaction, add to changes dictionary
         elif transaction and transaction.id:
             self.changes[transaction.id] = transaction
@@ -668,7 +691,7 @@ class TransactionGrid(QTableWidget):
             type_item = self.item(row, self.COL_TYPE)
             if type_item and type_item.text():
                 self.color_row(row, type_item.text())
-                
+
             # If this row was previously marked as an error, remove the error styling
             if row in self.error_rows:
                 self.error_rows.remove(row)

@@ -2,13 +2,85 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate, QComboBox, QDateEdit, QLineEdit, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QDate, QModelIndex
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtGui import QDoubleValidator, QColor, QBrush
 
 from models.account import Account
 from models.category import Category, SubCategory
 
 
-class ComboBoxDelegate(QStyledItemDelegate):
+class BaseRowColorDelegate(QStyledItemDelegate):
+    """
+    Base delegate class that handles row coloring based on row state.
+    All other delegates should inherit from this class.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Define colors - more subtle with transparency
+        self.new_row_color = QColor(100, 181, 246, 60)  # Subtle blue with transparency (increased opacity)
+        self.error_row_color = QColor(239, 83, 80, 60)  # Subtle red with transparency (increased opacity)
+
+        # Very subtle colors for transaction types - almost transparent
+        self.income_color = QColor(46, 204, 113, 20)  # Very subtle green
+        self.expense_color = QColor(231, 76, 60, 20)  # Very subtle red
+        self.transfer_color = QColor(52, 152, 219, 20)  # Very subtle blue
+
+        # Add row color
+        self.add_row_color = QColor(50, 100, 160, 40)  # Very subtle blue for add row
+
+    def paint(self, painter, option, index):
+        # Get the parent widget (TransactionGrid)
+        grid = self.parent()
+
+        # Get the row
+        row = index.row()
+
+        # Check if this is the "+" row (add row)
+        name_col = 1  # Assuming name is in column 1
+        name_item = grid.item(row, name_col)
+        is_add_row = (name_item and name_item.data(Qt.ItemDataRole.UserRole) == "add_row_marker")
+
+        # Save the original state
+        painter.save()
+
+        # Apply row-based coloring first
+        if is_add_row:
+            # Use a light blue color for the add row
+            painter.fillRect(option.rect, self.add_row_color)
+        # Check if this is a new row
+        elif hasattr(grid, 'new_rows') and row in grid.new_rows:
+            # Fill with new row color - subtle blue
+            painter.fillRect(option.rect, self.new_row_color)
+        # Check if this is an error row
+        elif hasattr(grid, 'error_rows') and row in grid.error_rows:
+            # Fill with error row color - subtle red
+            painter.fillRect(option.rect, self.error_row_color)
+        # Otherwise, only color the Type column based on transaction type
+        elif index.column() == 4:  # Type column
+            transaction_type = index.data(Qt.ItemDataRole.DisplayRole)
+
+            if transaction_type == "Expense":
+                painter.fillRect(option.rect, self.expense_color)
+            elif transaction_type == "Income":
+                painter.fillRect(option.rect, self.income_color)
+            elif transaction_type:  # Any other non-empty type
+                painter.fillRect(option.rect, self.transfer_color)
+
+        # Restore the original state
+        painter.restore()
+
+        # Call the base class to draw the item content
+        super().paint(painter, option, index)
+
+
+class RowColorDelegate(BaseRowColorDelegate):
+    """
+    Delegate for coloring rows based on their state (new, error, etc.)
+    This is a simple wrapper around BaseRowColorDelegate for backward compatibility.
+    """
+    pass
+
+
+class ComboBoxDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying a combo box in a table cell.
     """
@@ -16,19 +88,19 @@ class ComboBoxDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.items = items or []
         self.item_data = item_data or []
-    
+
     def createEditor(self, parent, option, index):
         """Create the combo box editor."""
         editor = QComboBox(parent)
         editor.addItems(self.items)
-        
+
         # Set item data if available
         if self.item_data and len(self.item_data) == len(self.items):
             for i, data in enumerate(self.item_data):
                 editor.setItemData(i, data)
-        
+
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         value = index.model().data(index, Qt.ItemDataRole.EditRole)
@@ -37,154 +109,154 @@ class ComboBoxDelegate(QStyledItemDelegate):
                 if editor.itemText(i) == value:
                     editor.setCurrentIndex(i)
                     break
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         value = editor.currentText()
         data = editor.currentData()
-        
+
         model.setData(index, value, Qt.ItemDataRole.EditRole)
         model.setData(index, data, Qt.ItemDataRole.UserRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class AccountDelegate(QStyledItemDelegate):
+class AccountDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing account information.
     """
     def createEditor(self, parent, option, index):
         """Create the combo box editor."""
         editor = QComboBox(parent)
-        
+
         # Load accounts
         accounts = Account.get_all()
         for account in accounts:
             editor.addItem(account.name, account.id)
-        
+
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         account_id = index.model().data(index, Qt.ItemDataRole.UserRole)
-        
+
         if account_id:
             for i in range(editor.count()):
                 if editor.itemData(i) == account_id:
                     editor.setCurrentIndex(i)
                     break
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         account_name = editor.currentText()
         account_id = editor.currentData()
-        
+
         model.setData(index, account_name, Qt.ItemDataRole.EditRole)
         model.setData(index, account_id, Qt.ItemDataRole.UserRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class CategoryDelegate(QStyledItemDelegate):
+class CategoryDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing category information.
     """
     def createEditor(self, parent, option, index):
         """Create the combo box editor."""
         editor = QComboBox(parent)
-        
+
         # Get transaction type from the same row
         model = index.model()
         type_index = model.index(index.row(), 4)  # Assuming type is in column 4
         transaction_type = model.data(type_index, Qt.ItemDataRole.EditRole)
-        
+
         # Load categories based on transaction type
         categories = Category.get_by_type(transaction_type or "Expense")
         for category in categories:
             editor.addItem(category.name, category.id)
-        
+
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         category_id = index.model().data(index, Qt.ItemDataRole.UserRole)
-        
+
         if category_id:
             for i in range(editor.count()):
                 if editor.itemData(i) == category_id:
                     editor.setCurrentIndex(i)
                     break
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         category_name = editor.currentText()
         category_id = editor.currentData()
-        
+
         model.setData(index, category_name, Qt.ItemDataRole.EditRole)
         model.setData(index, category_id, Qt.ItemDataRole.UserRole)
-        
+
         # Also update subcategory cell to empty since category changed
         subcategory_index = model.index(index.row(), 7)  # Assuming subcategory is in column 7
         model.setData(subcategory_index, "", Qt.ItemDataRole.EditRole)
         model.setData(subcategory_index, None, Qt.ItemDataRole.UserRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class SubCategoryDelegate(QStyledItemDelegate):
+class SubCategoryDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing subcategory information.
     """
     def createEditor(self, parent, option, index):
         """Create the combo box editor."""
         editor = QComboBox(parent)
-        
+
         # Get category ID from the same row
         model = index.model()
         category_index = model.index(index.row(), 6)  # Assuming category is in column 6
         category_id = model.data(category_index, Qt.ItemDataRole.UserRole)
-        
+
         # Add empty option
         editor.addItem("", None)
-        
+
         # Load subcategories based on category
         if category_id:
             subcategories = SubCategory.get_by_category(category_id)
             for subcategory in subcategories:
                 editor.addItem(subcategory.name, subcategory.id)
-        
+
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         subcategory_id = index.model().data(index, Qt.ItemDataRole.UserRole)
-        
+
         if subcategory_id:
             for i in range(editor.count()):
                 if editor.itemData(i) == subcategory_id:
                     editor.setCurrentIndex(i)
                     break
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         subcategory_name = editor.currentText()
         subcategory_id = editor.currentData()
-        
+
         model.setData(index, subcategory_name, Qt.ItemDataRole.EditRole)
         model.setData(index, subcategory_id, Qt.ItemDataRole.UserRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class DateDelegate(QStyledItemDelegate):
+class DateDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing dates.
     """
@@ -194,7 +266,7 @@ class DateDelegate(QStyledItemDelegate):
         editor.setCalendarPopup(True)
         editor.setDisplayFormat("yyyy-MM-dd")
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         value = index.model().data(index, Qt.ItemDataRole.EditRole)
@@ -206,18 +278,18 @@ class DateDelegate(QStyledItemDelegate):
                 editor.setDate(QDate.currentDate())
         else:
             editor.setDate(QDate.currentDate())
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         value = editor.date().toString("yyyy-MM-dd")
         model.setData(index, value, Qt.ItemDataRole.EditRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class CurrencyDelegate(QStyledItemDelegate):
+class CurrencyDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing currency values.
     """
@@ -229,7 +301,7 @@ class CurrencyDelegate(QStyledItemDelegate):
         editor.setMaximum(1000000.00)
         editor.setSingleStep(1.00)
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         value = index.model().data(index, Qt.ItemDataRole.EditRole)
@@ -237,18 +309,18 @@ class CurrencyDelegate(QStyledItemDelegate):
             editor.setValue(float(value) if value else 0.0)
         except (ValueError, TypeError):
             editor.setValue(0.0)
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         value = str(editor.value())
         model.setData(index, value, Qt.ItemDataRole.EditRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)
 
 
-class TransactionTypeDelegate(QStyledItemDelegate):
+class TransactionTypeDelegate(BaseRowColorDelegate):
     """
     Delegate for displaying and editing transaction types.
     """
@@ -257,7 +329,7 @@ class TransactionTypeDelegate(QStyledItemDelegate):
         editor = QComboBox(parent)
         editor.addItems(["Expense", "Income"])
         return editor
-    
+
     def setEditorData(self, editor, index):
         """Set the editor data."""
         value = index.model().data(index, Qt.ItemDataRole.EditRole)
@@ -266,22 +338,22 @@ class TransactionTypeDelegate(QStyledItemDelegate):
                 if editor.itemText(i) == value:
                     editor.setCurrentIndex(i)
                     break
-    
+
     def setModelData(self, editor, model, index):
         """Set the model data."""
         value = editor.currentText()
         model.setData(index, value, Qt.ItemDataRole.EditRole)
-        
+
         # Also update category cell since transaction type changed
         category_index = model.index(index.row(), 6)  # Assuming category is in column 6
         model.setData(category_index, "", Qt.ItemDataRole.EditRole)
         model.setData(category_index, None, Qt.ItemDataRole.UserRole)
-        
+
         # Also update subcategory cell
         subcategory_index = model.index(index.row(), 7)  # Assuming subcategory is in column 7
         model.setData(subcategory_index, "", Qt.ItemDataRole.EditRole)
         model.setData(subcategory_index, None, Qt.ItemDataRole.UserRole)
-    
+
     def updateEditorGeometry(self, editor, option, index):
         """Update the editor geometry."""
         editor.setGeometry(option.rect)

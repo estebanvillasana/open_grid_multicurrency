@@ -69,14 +69,18 @@ QTableWidget::item.add-row {
     font-weight: bold;
 }
 
-QTableWidget::item.new-row {
-    background-color: rgba(100, 181, 246, 80);
-    color: #fff;
+/* New row styling - much more visible blue */
+QTableWidget QTableWidgetItem[userrole="true"] {
+    background-color: #4fc3f7 !important;
+    color: #000000;
+    font-weight: bold;
 }
 
-QTableWidget::item.new-row:selected {
-    background-color: rgba(100, 181, 246, 130);
-    color: #fff;
+/* Error row styling - bright red */
+QTableWidget QTableWidgetItem[userrole2="true"] {
+    background-color: #f44336 !important;
+    color: #ffffff;
+    font-weight: bold;
 }
 
 QTableWidget::item:hover {
