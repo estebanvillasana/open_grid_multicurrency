@@ -23,28 +23,28 @@ class TransactionsScreen(QWidget):
 
         # Create main layout
         self.layout = QVBoxLayout(self)
-        
+
         # Create transaction form - we'll make this collapsible
         self.form_frame = QFrame()
         self.form_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self.form_layout = QVBoxLayout(self.form_frame)
-        
+
         self.transaction_form = TransactionForm()
         self.transaction_form.transaction_added.connect(self.on_transaction_added)
         self.form_layout.addWidget(self.transaction_form)
-        
+
         # Add toggle button for the form
         self.toggle_form_button = QPushButton("Hide Form")
         self.toggle_form_button.setCheckable(True)
         self.toggle_form_button.clicked.connect(self.toggle_form)
-        
+
         # Add buttons and grid to layout
         self.layout.addWidget(self.toggle_form_button)
         self.layout.addWidget(self.form_frame)
 
         # Create action buttons
         self.create_action_buttons()
-        
+
         # Add status label for notifications
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: white; background-color: rgba(41, 128, 185, 0.7); padding: 5px; border-radius: 3px;")
@@ -67,7 +67,7 @@ class TransactionsScreen(QWidget):
 
         # Load initial data
         self.refresh()
-        
+
         # Add some spacing and styling
         self.layout.setSpacing(10)
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -115,15 +115,15 @@ class TransactionsScreen(QWidget):
         # Save changes button
         self.save_button = QPushButton("Save Changes")
         self.save_button.setObjectName("save_button")
-        self.save_button.setStyleSheet("background-color: #3498db; color: white;")
+        self.save_button.setStyleSheet("background-color: rgba(52, 152, 219, 0.8); color: white;")
         self.save_button.clicked.connect(self.save_changes)
         button_layout.addWidget(self.save_button)
 
         self.layout.addLayout(button_layout)
 
-    def show_notification(self, message, color="#3498db", duration=3000):
+    def show_notification(self, message, color="rgba(52, 152, 219, 0.8)", duration=3000):
         """Show a temporary notification to the user
-        
+
         Args:
             message (str): Message to display
             color (str): Background color in hex format
@@ -132,35 +132,35 @@ class TransactionsScreen(QWidget):
         self.status_label.setText(message)
         self.status_label.setStyleSheet(f"color: white; background-color: {color}; padding: 5px; border-radius: 3px;")
         self.status_label.setVisible(True)
-        
+
         # Hide the notification after a delay
         QTimer.singleShot(duration, lambda: self.status_label.setVisible(False))
 
     def on_validation_failed(self, errors):
         """Handle validation failures when saving
-        
+
         Args:
             errors (list): List of tuples (row, error_message)
         """
         if not errors:
             return
-            
+
         # Show a notification with the number of errors
         error_message = f"Could not save {len(errors)} transaction(s) due to missing required fields."
         self.show_notification(
             error_message,
-            color="#e74c3c"  # Red color for error
+            color="rgba(220, 53, 69, 0.8)"  # Soft red for error, matching our new color scheme
         )
-        
+
         # Always show a message box with details about the missing fields
         detailed_message = ""
-        
+
         # Group errors by type for clearer messaging
         missing_name = []
         missing_account = []
         missing_type = []
         missing_date = []
-        
+
         for row, message in errors:
             if "Name" in message:
                 missing_name.append(row+1)  # +1 for human-readable row number
@@ -170,7 +170,10 @@ class TransactionsScreen(QWidget):
                 missing_type.append(row+1)
             elif "Date" in message:
                 missing_date.append(row+1)
-        
+
+            # Directly apply styling to the error row
+            self.transaction_grid.highlight_error_row(row, message)
+
         # Build the detailed message
         if missing_name:
             detailed_message += f"Missing Name: Rows {', '.join(map(str, missing_name))}\n"
@@ -180,17 +183,25 @@ class TransactionsScreen(QWidget):
             detailed_message += f"Missing Type: Rows {', '.join(map(str, missing_type))}\n"
         if missing_date:
             detailed_message += f"Missing Date: Rows {', '.join(map(str, missing_date))}\n"
-        
+
         # Show the detailed message box
         QMessageBox.warning(
             self,
             "Validation Errors",
             f"{error_message}\n\n{detailed_message}\n\nRows with errors are highlighted in red. Please fix the missing fields and try again."
         )
-        
+
         # Focus on the first row with an error
         if errors:
             self.transaction_grid.selectRow(errors[0][0])
+
+        # Schedule additional styling updates to ensure they persist
+        for row, message in errors:
+            QTimer.singleShot(500, lambda r=row, m=message: self.transaction_grid.highlight_error_row(r, m))
+            QTimer.singleShot(1000, lambda r=row, m=message: self.transaction_grid.highlight_error_row(r, m))
+            QTimer.singleShot(2000, lambda r=row, m=message: self.transaction_grid.highlight_error_row(r, m))
+
+
 
     def refresh(self):
         """Refresh the transactions data."""
@@ -212,7 +223,7 @@ class TransactionsScreen(QWidget):
             self.edit_mode = True
             self.transaction_form.load_transaction(selected_transaction)
             self.transaction_form.setTitle("Edit Transaction")
-            
+
             # Make sure the form is visible
             if not self.form_frame.isVisible():
                 self.toggle_form()
@@ -241,22 +252,22 @@ class TransactionsScreen(QWidget):
     def save_changes(self):
         """Save all changes to the database."""
         result = self.transaction_grid.save_all_changes()
-        
+
         if result:
             # Show a success notification
-            self.show_notification("All changes saved successfully", color="#27ae60")
-            
+            self.show_notification("All changes saved successfully", color="rgba(40, 167, 69, 0.8)")
+
             # Show a brief highlight on the save button to indicate success
             original_style = self.save_button.styleSheet()
-            self.save_button.setStyleSheet("background-color: #27ae60; color: white;")
-            
+            self.save_button.setStyleSheet("background-color: rgba(40, 167, 69, 0.8); color: white;")
+
             # Use a timer to reset the style after a short delay
             QTimer.singleShot(1000, lambda: self.save_button.setStyleSheet(original_style))
 
     def on_transaction_added(self, transaction):
         """Handle when a transaction is added via the form."""
         self.refresh()
-        self.show_notification("Transaction added successfully", color="#27ae60")
+        self.show_notification("Transaction added successfully", color="rgba(40, 167, 69, 0.8)")
 
     def on_transaction_selected(self, transaction):
         """Handle when a transaction is selected in the grid."""

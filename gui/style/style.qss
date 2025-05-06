@@ -76,11 +76,12 @@ QTableWidget QTableWidgetItem[userrole="true"] {
     font-weight: bold;
 }
 
-/* Error row styling - bright red */
+/* Error row styling - bright red with border */
 QTableWidget QTableWidgetItem[userrole2="true"] {
     background-color: #f44336 !important;
     color: #ffffff;
     font-weight: bold;
+    border: 2px solid #d32f2f !important;
 }
 
 QTableWidget::item:hover {

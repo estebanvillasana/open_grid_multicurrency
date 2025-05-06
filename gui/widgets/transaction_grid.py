@@ -8,6 +8,8 @@ from PyQt6.QtGui import QColor, QBrush, QKeySequence, QFont
 import csv
 import io
 
+
+
 from models.transaction import Transaction
 from models.account import Account
 from models.category import Category, SubCategory
@@ -39,13 +41,15 @@ class TransactionGrid(QTableWidget):
     COL_SUBCATEGORY = 7
     COL_DATE = 8
 
-    # Colors - Updated for better visibility in dark theme with more subtle transparency
-    ADD_ROW_COLOR = QColor(50, 100, 160, 40)  # Very subtle blue for add row
-    NEW_ROW_COLOR = QColor(100, 181, 246, 60)  # Subtle blue for new rows (increased opacity)
-    ERROR_ROW_COLOR = QColor(239, 83, 80, 60)  # Subtle red for validation errors (increased opacity)
-    INCOME_COLOR = QColor(46, 204, 113, 20)  # Very subtle green
-    EXPENSE_COLOR = QColor(231, 76, 60, 20)  # Very subtle red
-    TRANSFER_COLOR = QColor(52, 152, 219, 20)  # Very subtle blue
+    # Colors - Updated for a more elegant look with less saturation
+    ADD_ROW_COLOR = QColor(220, 230, 240, 40)  # Very subtle blue-gray for add row
+    NEW_ROW_COLOR = QColor(213, 232, 250, 100)  # Soft blue for new rows
+    MODIFIED_ROW_COLOR = QColor(255, 248, 214, 100)  # Soft yellow for modified existing rows
+    ERROR_ROW_COLOR = QColor(250, 220, 220, 180)  # Soft red for error rows
+    ERROR_FIELD_COLOR = QColor(255, 200, 200, 220)  # Slightly more intense red for error fields
+    INCOME_COLOR = QColor(230, 245, 230, 30)  # Very subtle green
+    EXPENSE_COLOR = QColor(245, 230, 230, 30)  # Very subtle red
+    TRANSFER_COLOR = QColor(230, 240, 250, 30)  # Very subtle blue
 
     def __init__(self):
         super().__init__()
@@ -99,7 +103,9 @@ class TransactionGrid(QTableWidget):
         self.redo_stack = []
         self.changes = {}  # Dictionary to track changes: {row_id: Transaction}
         self.new_rows = []  # List to track new rows that haven't been saved yet
+        self.modified_rows = []  # List to track existing rows that have been modified
         self.error_rows = []  # List to track rows with validation errors
+        self.error_fields = set()  # Set to track specific fields causing errors: {(row, col)}
 
     def setup_delegates(self):
         """Set up custom delegates for editing different column types."""
@@ -146,7 +152,9 @@ class TransactionGrid(QTableWidget):
         self.setRowCount(0)
         self.changes.clear()
         self.new_rows.clear()
+        self.modified_rows.clear()
         self.error_rows.clear()
+        self.error_fields.clear()
 
         # Add existing transactions to the grid
         for i, transaction in enumerate(transactions):
@@ -353,19 +361,28 @@ class TransactionGrid(QTableWidget):
         # Also force a full repaint to ensure all cells are updated
         self.repaint()
 
-    def highlight_error_row(self, row, error_message=None):
-        """Apply error styling to rows that failed validation."""
-        # Add to error rows list if not already there
-        if row not in self.error_rows:
-            self.error_rows.append(row)
+        # Schedule additional updates to ensure the highlighting persists
+        # This helps with rendering issues where the highlight might not be applied consistently
+        QTimer.singleShot(100, lambda r=row: self.refresh_row_styling(r))
+        QTimer.singleShot(500, lambda r=row: self.refresh_row_styling(r))
 
-        # Set tooltip on all cells to show the error
-        self.blockSignals(True)
-        for col in range(self.columnCount()):
-            item = self.item(row, col)
-            if item:
-                item.setToolTip(error_message if error_message else "Validation error")
-        self.blockSignals(False)
+    def highlight_modified_row(self, row):
+        """Apply special styling to existing rows that have been modified."""
+        # Add to modified rows list if not already there
+        if row not in self.modified_rows:
+            self.modified_rows.append(row)
+
+        # Remove from other styling lists to avoid conflicts
+        if row in self.new_rows:
+            self.new_rows.remove(row)
+
+        # Make first cell show "MODIFIED" if it's not already
+        name_item = self.item(row, self.COL_NAME)
+        if name_item and not name_item.text().startswith("MODIFIED: ") and not name_item.text().startswith("NEW: "):
+            original_text = name_item.text()
+            self.blockSignals(True)
+            name_item.setText("MODIFIED: " + original_text)
+            self.blockSignals(False)
 
         # Force update each cell in the row to apply the delegate's coloring
         for col in range(self.columnCount()):
@@ -375,6 +392,130 @@ class TransactionGrid(QTableWidget):
 
         # Also force a full repaint to ensure all cells are updated
         self.repaint()
+
+        # Schedule additional updates to ensure the highlighting persists
+        QTimer.singleShot(100, lambda r=row: self.refresh_row_styling(r))
+        QTimer.singleShot(500, lambda r=row: self.refresh_row_styling(r))
+
+    def highlight_error_row(self, row, error_message=None):
+        """Apply error styling to rows that failed validation."""
+        # Add to error rows list if not already there
+        if row not in self.error_rows:
+            self.error_rows.append(row)
+
+        # Remove from new_rows list if it's there to avoid styling conflicts
+        if row in self.new_rows:
+            self.new_rows.remove(row)
+
+        # Remove from modified_rows list if it's there to avoid styling conflicts
+        if row in self.modified_rows:
+            self.modified_rows.remove(row)
+
+        # Identify which fields are causing the error
+        if error_message:
+            # Clear previous error fields for this row
+            self.error_fields = {(r, c) for r, c in self.error_fields if r != row}
+
+            # Add specific error fields based on the error message
+            if "Name is required" in error_message:
+                self.error_fields.add((row, self.COL_NAME))
+            if "Account is required" in error_message:
+                self.error_fields.add((row, self.COL_ACCOUNT))
+            if "Type is required" in error_message:
+                self.error_fields.add((row, self.COL_TYPE))
+            if "Date is required" in error_message:
+                self.error_fields.add((row, self.COL_DATE))
+
+        # Create a very visible error style
+        error_bg = QBrush(self.ERROR_ROW_COLOR)  # Use the class constant for consistency
+        error_fg = QBrush(QColor(50, 50, 50))   # Dark text for better readability on light red
+
+        # Apply direct styling to all cells in the row
+        self.blockSignals(True)
+        for col in range(self.columnCount()):
+            item = self.item(row, col)
+            if item:
+                # Set tooltip
+                item.setToolTip(error_message if error_message else "Validation error")
+
+                # Apply direct styling
+                item.setBackground(error_bg)
+                item.setForeground(error_fg)
+
+                # If this is a specific error field, make it more visible
+                if (row, col) in self.error_fields:
+                    error_field_bg = QBrush(self.ERROR_FIELD_COLOR)
+                    item.setBackground(error_field_bg)
+
+                    # Make text bold for extra emphasis on error fields
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+        self.blockSignals(False)
+
+        # Force update each cell in the row to apply the styling
+        for col in range(self.columnCount()):
+            index = self.model().index(row, col)
+            if index.isValid():
+                self.update(index)
+
+        # Also force a full repaint to ensure all cells are updated
+        self.repaint()
+
+        # Schedule multiple updates to ensure styling persists
+        QTimer.singleShot(100, lambda r=row: self.update_error_row_styling(r))
+        QTimer.singleShot(500, lambda r=row: self.update_error_row_styling(r))
+        QTimer.singleShot(1000, lambda r=row: self.update_error_row_styling(r))
+        QTimer.singleShot(2000, lambda r=row: self.update_error_row_styling(r))
+        QTimer.singleShot(3000, lambda r=row: self.update_error_row_styling(r))
+
+    def refresh_row_styling(self, row):
+        """Refresh the styling for a row after a delay.
+        This helps ensure the styling is applied consistently."""
+        if row < self.rowCount():
+            # Force update each cell in the row
+            for col in range(self.columnCount()):
+                index = self.model().index(row, col)
+                if index.isValid():
+                    self.update(index)
+
+            # Force a repaint
+            self.repaint()
+
+    def update_error_row_styling(self, row):
+        """Update the styling for an error row after a delay.
+        This helps ensure the error styling is applied even if other events interfere."""
+        if row in self.error_rows and row < self.rowCount():
+            # Create a very visible error style
+            error_bg = QBrush(self.ERROR_ROW_COLOR)  # Use the class constant for consistency
+            error_fg = QBrush(QColor(50, 50, 50))   # Dark text for better readability on light red
+
+            # Re-apply direct styling to all cells in the row
+            for col in range(self.columnCount()):
+                item = self.item(row, col)
+                if item:
+                    # Apply direct styling
+                    item.setBackground(error_bg)
+                    item.setForeground(error_fg)
+
+                    # If this is a specific error field, make it more visible
+                    if (row, col) in self.error_fields:
+                        error_field_bg = QBrush(self.ERROR_FIELD_COLOR)
+                        item.setBackground(error_field_bg)
+
+                        # Make text bold for extra emphasis on error fields
+                        font = item.font()
+                        font.setBold(True)
+                        item.setFont(font)
+
+            # Force update the row
+            for col in range(self.columnCount()):
+                index = self.model().index(row, col)
+                if index.isValid():
+                    self.update(index)
+
+            # Force a repaint
+            self.repaint()
 
     def get_selected_transaction(self):
         """Get the currently selected transaction."""
@@ -452,13 +593,7 @@ class TransactionGrid(QTableWidget):
 
     def save_all_changes(self):
         """Save all changes to the database."""
-        # Clear previous error rows
-        for row in self.error_rows:
-            if row < self.rowCount():
-                # Re-highlight as new row if it's still not saved
-                if row in self.new_rows:
-                    self.highlight_new_row(row)
-        self.error_rows.clear()
+        # We'll clear error rows only after successful validation
 
         validation_errors = []
         # Save changes to existing transactions
@@ -505,30 +640,38 @@ class TransactionGrid(QTableWidget):
                         self.highlight_error_row(row, validation_result[1])
                         validation_errors.append((row, validation_result[1]))
 
-        # Force update visually after all changes
-        self.update()
-        self.repaint()
-
-        # Make sure error rows are properly highlighted
-        for row, _ in validation_errors:
-            if row < self.rowCount():
-                # Force update the row to ensure error highlighting is visible
-                self.update(self.model().index(row, 0))
-                self.update(self.model().index(row, self.columnCount() - 1))
-
         # Update the new_rows list to remove saved rows
         self.new_rows = [row for row in self.new_rows if row not in saved_rows]
 
         # Clear changes dictionary
         self.changes.clear()
 
-        # Emit validation errors if any
+        # If there are validation errors, apply direct styling and emit signal
         if validation_errors:
+            # Apply direct styling to all rows with validation errors
+            for row, error_msg in validation_errors:
+                if row < self.rowCount():
+                    # Use our highlight_error_row method to ensure consistent styling
+                    self.highlight_error_row(row, error_msg)
+
+                    # Schedule additional updates to ensure styling persists
+                    QTimer.singleShot(100, lambda r=row: self.update_error_row_styling(r))
+                    QTimer.singleShot(500, lambda r=row: self.update_error_row_styling(r))
+
+            # Force update visually
+            self.update()
+            self.repaint()
+
+            # Emit validation errors
             self.validation_failed.emit(validation_errors)
             return False  # Return False to indicate not all rows were saved
 
-        # Refresh the grid to show saved transactions
-        # This will keep unsaved rows at the bottom
+        # All validation passed - now we can clear all styling
+        self.error_rows.clear()
+        self.error_fields.clear()
+        self.modified_rows.clear()
+
+        # Refresh the grid
         from data.repositories.transaction_repository import TransactionRepository
         self.load_transactions(TransactionRepository.get_transactions_with_details())
 
@@ -673,34 +816,27 @@ class TransactionGrid(QTableWidget):
             # This helps ensure the color is applied even if other events interfere
             QTimer.singleShot(100, lambda: self.highlight_new_row(row))
 
-            # If this row was previously marked as an error, remove the error styling
-            if row in self.error_rows:
-                self.error_rows.remove(row)
-                # Clear any error tooltips
-                for c in range(self.columnCount()):
-                    i = self.item(row, c)
-                    if i:
-                        i.setToolTip("")
-                        i.setData(Qt.ItemDataRole.UserRole + 2, None)
+            # We'll keep error styling until validation passes
+            # Error styling will be cleared when save_all_changes is called
 
         # Otherwise, if it's an existing transaction, add to changes dictionary
         elif transaction and transaction.id:
             self.changes[transaction.id] = transaction
+
+            # Add to modified rows list if not already there
+            if row not in self.modified_rows and row not in self.error_rows:
+                self.modified_rows.append(row)
+
+            # Apply the highlight to show this is a modified row
+            self.highlight_modified_row(row)
 
             # Update the row color based on transaction type
             type_item = self.item(row, self.COL_TYPE)
             if type_item and type_item.text():
                 self.color_row(row, type_item.text())
 
-            # If this row was previously marked as an error, remove the error styling
-            if row in self.error_rows:
-                self.error_rows.remove(row)
-                # Clear any error tooltips
-                for c in range(self.columnCount()):
-                    i = self.item(row, c)
-                    if i:
-                        i.setToolTip("")
-                        i.setData(Qt.ItemDataRole.UserRole + 2, None)
+            # We'll keep error styling until validation passes
+            # Error styling will be cleared when save_all_changes is called
 
         # Emit signal
         self.transaction_edited.emit(transaction)

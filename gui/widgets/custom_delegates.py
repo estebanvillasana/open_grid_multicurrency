@@ -15,17 +15,19 @@ class BaseRowColorDelegate(QStyledItemDelegate):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Define colors - more subtle with transparency
-        self.new_row_color = QColor(100, 181, 246, 60)  # Subtle blue with transparency (increased opacity)
-        self.error_row_color = QColor(239, 83, 80, 60)  # Subtle red with transparency (increased opacity)
+        # Define colors - more elegant with less saturation
+        self.new_row_color = QColor(213, 232, 250, 100)  # Soft blue for new rows
+        self.modified_row_color = QColor(255, 248, 214, 100)  # Soft yellow for modified existing rows
+        self.error_row_color = QColor(250, 220, 220, 180)  # Soft red for error rows
+        self.error_field_color = QColor(255, 200, 200, 220)  # Slightly more intense red for error fields
 
-        # Very subtle colors for transaction types - almost transparent
-        self.income_color = QColor(46, 204, 113, 20)  # Very subtle green
-        self.expense_color = QColor(231, 76, 60, 20)  # Very subtle red
-        self.transfer_color = QColor(52, 152, 219, 20)  # Very subtle blue
+        # Very subtle colors for transaction types
+        self.income_color = QColor(230, 245, 230, 30)  # Very subtle green
+        self.expense_color = QColor(245, 230, 230, 30)  # Very subtle red
+        self.transfer_color = QColor(230, 240, 250, 30)  # Very subtle blue
 
         # Add row color
-        self.add_row_color = QColor(50, 100, 160, 40)  # Very subtle blue for add row
+        self.add_row_color = QColor(220, 230, 240, 40)  # Very subtle blue-gray for add row
 
     def paint(self, painter, option, index):
         # Get the parent widget (TransactionGrid)
@@ -42,18 +44,38 @@ class BaseRowColorDelegate(QStyledItemDelegate):
         # Save the original state
         painter.save()
 
-        # Apply row-based coloring first
-        if is_add_row:
-            # Use a light blue color for the add row
+        # Check if this is an error row - PRIORITY OVER ALL OTHER STYLING
+        if hasattr(grid, 'error_rows') and row in grid.error_rows:
+            # Fill with error row color - soft red
+            painter.fillRect(option.rect, self.error_row_color)
+
+            # Check if this specific field is causing the error
+            if hasattr(grid, 'error_fields') and (row, index.column()) in grid.error_fields:
+                # Use a more intense red for the specific error field
+                painter.fillRect(option.rect, self.error_field_color)
+
+                # Draw a red border around the error field for extra emphasis
+                pen = painter.pen()
+                pen.setColor(QColor(220, 100, 100))  # Slightly darker red for border
+                pen.setWidth(2)  # Thicker border for better visibility
+                painter.setPen(pen)
+                painter.drawRect(option.rect)
+
+        # Check if this is the "+" row (add row)
+        elif is_add_row:
+            # Use a light blue-gray color for the add row
             painter.fillRect(option.rect, self.add_row_color)
+
         # Check if this is a new row
         elif hasattr(grid, 'new_rows') and row in grid.new_rows:
-            # Fill with new row color - subtle blue
+            # Fill with new row color - soft blue
             painter.fillRect(option.rect, self.new_row_color)
-        # Check if this is an error row
-        elif hasattr(grid, 'error_rows') and row in grid.error_rows:
-            # Fill with error row color - subtle red
-            painter.fillRect(option.rect, self.error_row_color)
+
+        # Check if this is a modified existing row
+        elif hasattr(grid, 'modified_rows') and row in grid.modified_rows:
+            # Fill with modified row color - soft yellow
+            painter.fillRect(option.rect, self.modified_row_color)
+
         # Otherwise, only color the Type column based on transaction type
         elif index.column() == 4:  # Type column
             transaction_type = index.data(Qt.ItemDataRole.DisplayRole)
